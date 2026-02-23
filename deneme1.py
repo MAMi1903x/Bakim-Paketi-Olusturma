@@ -38,6 +38,31 @@ if "dl_v" not in st.session_state:
 # -----------------------------
 # Helpers
 # -----------------------------
+def detect_aircraft_family_from_cover(pdf_file_obj):
+    """
+    Cover Page'deki 'A/C Type / Registration' alanından ilk 4 haneye göre
+    B737NG (B73N) / B737MAX (B73M) tespiti yapar.
+    """
+    full_text = ""
+    with pdfplumber.open(pdf_file_obj) as pdf:
+        for page in pdf.pages:
+            t = page.extract_text()
+            if t:
+                full_text += t + "\n"
+
+    ac_match = re.search(r"A/C Type\s*/\s*Registration\s*(.+)", full_text, re.IGNORECASE)
+    if not ac_match:
+        return None, "⚠️ A/C Type / Registration bulunamadı."
+
+    ac_info = ac_match.group(1).strip()
+    prefix4 = ac_info[:4].upper()
+
+    if prefix4 == "B73N":
+        return "B737NG", "✈️ Uçak tipi: B737NG (B73N)"
+    if prefix4 == "B73M":
+        return "B737MAX", "✈️ Uçak tipi: B737MAX (B73M) ‼️YETKİ KONTROLÜ YAPILMASI GEREKİYOR‼️ "
+
+    return "UNKNOWN", f"⚠️ Uçak tipi tanınamadı (ilk 4 hane: {prefix4})"
 def norm_header(s) -> str:
     return str(s).strip().lower() if s is not None else ""
 
@@ -357,6 +382,13 @@ def workbook_bytes_to_tsv_bytes(xlsx_bytes: bytes) -> bytes:
 # Main action: compute & store
 # -----------------------------
 if st.button("Excel Oluştur"):
+    family, msg = detect_aircraft_family_from_cover(pdf_file)
+    if family == "B737MAX":
+        st.info(msg)
+    elif family == "B737NG":
+        st.success(msg)
+    else:
+        st.warning(msg)
     if not (pdf_file and template_file and wo_number):
         st.error("PDF, Excel şablon ve W/O numarasını girmen gerekiyor.")
     elif use_engineering and map_file is None:
@@ -448,4 +480,5 @@ if st.session_state["filled_xlsx"] is not None:
             file_name=f"{aircraft} IMPORT EXCELI_v{v}.txt",
             mime="text/plain",
             key=f"dl_txt_persist_{v}",
+
         )
