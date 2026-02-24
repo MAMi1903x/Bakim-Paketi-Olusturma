@@ -38,6 +38,13 @@ if "dl_v" not in st.session_state:
 # -----------------------------
 # Helpers
 # -----------------------------
+def normalize_skill(skill_value):
+    skill_value = str(skill_value).strip().upper()
+
+    if skill_value in ["B1", "B2"]:
+        return skill_value
+    else:
+        return "B1"
 def detect_aircraft_family_from_cover(pdf_file_obj):
     """
     Cover Page'deki 'A/C Type / Registration' alanından ilk 4 haneye göre
@@ -109,7 +116,7 @@ def parse_mh_and_skill(value):
     if "/" in v:
         mh_part, skill = v.split("/", 1)
         mh_part = mh_part.strip()
-        skill = str(skill).strip()
+        skill = normalize_skill(skill)
 
     if ":" in mh_part:
         try:
@@ -482,3 +489,4 @@ if st.session_state["filled_xlsx"] is not None:
             key=f"dl_txt_persist_{v}",
 
         )
+
