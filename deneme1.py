@@ -39,65 +39,31 @@ if "dl_v" not in st.session_state:
 # Helpers
 # -----------------------------
 def get_location_from_package(package_name: str) -> str:
-   package_name = (package_name or "").strip().upper()
-   return package_name[-3:] if len(package_name) >= 3 else ""
+    package_name = (package_name or "").strip().upper()
+    return package_name[-3:] if len(package_name) >= 3 else ""
+
 def normalize_skill(skill_value):
-    skill_value = str(skill_value).strip().upper()
+    s = str(skill_value).strip().upper()
+    return s if s in ("B1", "B2") else "B1"
 
-    if skill_value in ["B1", "B2"]:
-        return skill_value
-    else:
-        return "B1"
-def detect_aircraft_family_from_cover(pdf_file_obj):
-    """
-    Cover Page'deki 'A/C Type / Registration' alanından ilk 4 haneye göre
-    B737NG (B73N) / B737MAX (B73M) tespiti yapar.
-    """
-    full_text = ""
-    with pdfplumber.open(pdf_file_obj) as pdf:
-        for page in pdf.pages:
-            t = page.extract_text()
-            if t:
-                full_text += t + "\n"
-
-    ac_match = re.search(r"A/C Type\s*/\s*Registration\s*(.+)", full_text, re.IGNORECASE)
-    if not ac_match:
-        return None, "⚠️ A/C Type / Registration bulunamadı."
-
-    ac_info = ac_match.group(1).strip()
-    prefix4 = ac_info[:4].upper()
-
-    if prefix4 == "B73N":
-        return "B737NG", "✈️ Uçak tipi: B737NG (B73N)"
-    if prefix4 == "B73M":
-        return "B737MAX", "✈️ Uçak tipi: B737MAX (B73M) ‼️YETKİ KONTROLÜ YAPILMASI GEREKİYOR‼️ "
-
-    return "UNKNOWN", f"⚠️ Uçak tipi tanınamadı (ilk 4 hane: {prefix4})"
 def norm_header(s) -> str:
     return str(s).strip().lower() if s is not None else ""
 
-
 def clean_text_key(text) -> str:
-    """Matching için: UPPER + İ->I + whitespace normalize"""
     if text is None:
         return ""
     s = str(text).upper().replace("İ", "I")
     s = re.sub(r"\s+", " ", s).strip()
     return s
 
-
 def clean_description(text) -> str:
-    """Description için: UPPER + İ->I (whitespace normalize)"""
     return clean_text_key(text)
 
-
 def yn_from_any(val) -> str:
-    """Y/YES/TRUE/1 => Y, else N"""
     if val is None:
         return "N"
     s = str(val).strip().upper()
     return "Y" if s in ("Y", "YES", "TRUE", "1", "T") else "N"
-
 
 def parse_mh_and_skill(value):
     """
@@ -133,21 +99,17 @@ def parse_mh_and_skill(value):
     except Exception:
         return mh_part, skill
 
-
 def safe_cell_str(v) -> str:
-    """TSV için güvenli string"""
     if v is None:
         return ""
     return str(v).replace("\t", " ").replace("\n", " ").replace("\r", " ")
 
-
 # -----------------------------
-# Cover info
+# Cover info (Type Of Work + Registration)
 # -----------------------------
 def extract_cover_info(full_text: str):
-    """Paket: Type Of Work, Tescil: A/C Type / Registration"""
     package_name = ""
-     = ""
+    aircraft = ""
 
     m_type = re.search(r"Type\s*Of\s*Work\s*:?\s*(.+)", full_text, re.IGNORECASE)
     if m_type:
@@ -155,24 +117,42 @@ def extract_cover_info(full_text: str):
 
     m_reg = re.search(r"A/C Type\s*/\s*Registration\s*(.+)", full_text, re.IGNORECASE)
     if m_reg:
-         = m_reg.group(1).split("/")[-1].strip()
+        aircraft = m_reg.group(1).split("/")[-1].strip()
 
-    return , package_name
+    return aircraft, package_name
 
+def detect_aircraft_family_from_cover(pdf_bytes: bytes):
+    full_text = ""
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        for page in pdf.pages:
+            t = page.extract_text()
+            if t:
+                full_text += t + "\n"
+
+    ac_match = re.search(r"A/C Type\s*/\s*Registration\s*(.+)", full_text, re.IGNORECASE)
+    if not ac_match:
+        return None, "⚠️ A/C Type / Registration bulunamadı."
+
+    ac_info = ac_match.group(1).strip()
+    prefix4 = ac_info[:4].upper()
+
+    if prefix4 == "B73N":
+        return "B737NG", "✈️ Uçak tipi: B737NG (B73N)"
+    if prefix4 == "B73M":
+        return "B737MAX", "✈️ Uçak tipi: B737MAX (B73M) ‼️YETKİ KONTROLÜ YAPILMASI GEREKİYOR‼️"
+
+    return "UNKNOWN", f"⚠️ Uçak tipi tanınamadı (ilk 4 hane: {prefix4})"
 
 # -----------------------------
-# Summary table detection (robust)
+# Summary detection (robust)
 # -----------------------------
 def is_summary_page(page_text: str) -> bool:
     return "SUMMARY" in (page_text or "").upper()
 
-
 def normalize_colname(c) -> str:
     return str(c).strip().upper() if c is not None else ""
 
-
 def find_best_columns(df_cols):
-    """Esnek kolon bulma: Description, Est.MH, W/O & Reference"""
     desc_col = next((c for c in df_cols if "DESC" in normalize_colname(c)), None)
     mh_col = next((c for c in df_cols if "MH" in normalize_colname(c)), None)
 
@@ -184,17 +164,14 @@ def find_best_columns(df_cols):
 
     return desc_col, mh_col, ref_col
 
-
 def table_looks_like_summary(header_row) -> bool:
-    """Summary tablosunu ayır: DESC + MH + (REFER veya W/O)"""
     header = [normalize_colname(h) for h in header_row]
     has_desc = any("DESC" in h for h in header)
     has_mh = any("MH" in h for h in header)
     has_ref = any("REFER" in h for h in header) or any("W/O" in h for h in header) or any("WO" in h.replace(" ", "") for h in header)
     return has_desc and has_mh and has_ref
 
-
-def extract_summary_tasks(pdf_file_obj):
+def extract_summary_tasks(pdf_bytes: bytes):
     """
     PDF’ten tasks:
     - final description kuralı:
@@ -204,20 +181,20 @@ def extract_summary_tasks(pdf_file_obj):
     - match_key: raw_desc (engineering eşleşme için)
     """
     full_text = ""
-    with pdfplumber.open(pdf_file_obj) as pdf:
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         for p in pdf.pages:
             t = p.extract_text()
             if t:
                 full_text += t + "\n"
 
-    , package_name = extract_cover_info(full_text)
+    aircraft, package_name = extract_cover_info(full_text)
 
     camo_prefix = f"PLEASE PERFORM CAMO WP: {package_name} | "
     camo_prefix = camo_prefix.upper().replace("İ", "I")
 
     tasks = []
 
-    with pdfplumber.open(pdf_file_obj) as pdf:
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         for page in pdf.pages:
             page_text = page.extract_text() or ""
             if not is_summary_page(page_text):
@@ -273,8 +250,7 @@ def extract_summary_tasks(pdf_file_obj):
                         "cdccl": "N",
                     })
 
-    return , package_name, tasks
-
+    return aircraft, package_name, tasks
 
 # -----------------------------
 # Engineering mapping
@@ -283,10 +259,15 @@ def load_engineering_mapping(uploaded_excel):
     df = pd.read_excel(uploaded_excel)
     cols = {str(c).strip().upper(): c for c in df.columns}
 
-    if "DESCRIPTION" not in cols:
-        raise KeyError("Mühendislik değerlendirmesi Excel'inde DESCRIPTION sütunu yok.")
+    if "DESCRIPTION" not in cols and "DESCRIPTION " not in cols:
+        # case-insensitive yakalama
+        desc_guess = next((k for k in cols.keys() if k.strip().upper() == "DESCRIPTION"), None)
+        if not desc_guess:
+            raise KeyError("Mühendislik değerlendirmesi Excel'inde DESCRIPTION sütunu yok.")
+        desc_col = cols[desc_guess]
+    else:
+        desc_col = cols.get("DESCRIPTION", cols.get("DESCRIPTION "))
 
-    desc_col = cols["DESCRIPTION"]
     cmt_col = cols.get("CMT")
     imt_col = cols.get("IMT")
     cdccl_col = cols.get("CDCCL")
@@ -317,11 +298,10 @@ def load_engineering_mapping(uploaded_excel):
 
     return mapping, kompleks_any
 
-
 # -----------------------------
 # Fill template
 # -----------------------------
-def fill_template_excel(template_bytes, , package_name, tasks, wo_number):
+def fill_template_excel(template_bytes, aircraft, package_name, tasks, wo_number):
     wb = load_workbook(io.BytesIO(template_bytes))
     ws = wb.active
 
@@ -343,7 +323,7 @@ def fill_template_excel(template_bytes, , package_name, tasks, wo_number):
     for i, t in enumerate(tasks):
         r = start_row + i
 
-        ws.cell(r, col("Aircraf")).value = 
+        ws.cell(r, col("Aircraf")).value = aircraft
         ws.cell(r, col("Check")).value = package_name
         ws.cell(r, col("wo")).value = wo_number
         ws.cell(r, col("chapter")).value = 5
@@ -368,7 +348,6 @@ def fill_template_excel(template_bytes, , package_name, tasks, wo_number):
     out.seek(0)
     return out.getvalue()
 
-
 # -----------------------------
 # Export TSV from filled workbook (includes hidden columns)
 # -----------------------------
@@ -387,33 +366,36 @@ def workbook_bytes_to_tsv_bytes(xlsx_bytes: bytes) -> bytes:
 
     return ("\n".join(lines)).encode("utf-8")
 
-
 # -----------------------------
 # Main action: compute & store
 # -----------------------------
 if st.button("Excel Oluştur"):
-    family, msg = detect__family_from_cover(pdf_file)
-    if family == "B737MAX":
-        st.info(msg)
-    elif family == "B737NG":
-        st.success(msg)
-    else:
-        st.warning(msg)
     if not (pdf_file and template_file and wo_number):
         st.error("PDF, Excel şablon ve W/O numarasını girmen gerekiyor.")
     elif use_engineering and map_file is None:
         st.error("Mühendislik değerlendirmesi seçildi ama Excel yüklenmedi.")
     else:
         try:
-            aircraft, package_name, tasks = extract_summary_tasks(pdf_file)
+            # ✅ PDF BYTES FIX (seek hatasını bitirir)
+            pdf_bytes = pdf_file.getvalue()
+
+            # Uçak tipi bilgisi
+            family, msg = detect_aircraft_family_from_cover(pdf_bytes)
+            if family == "B737MAX":
+                st.info(msg)
+            elif family == "B737NG":
+                st.success(msg)
+            else:
+                st.warning(msg)
+
+            aircraft, package_name, tasks = extract_summary_tasks(pdf_bytes)
+
+            # Lokasyon + AYT uyarısı
             location = get_location_from_package(package_name)
             target = "38-070-00-01"
-            has_target = any(
-               (t.get("match_key", "") or "")[:12].upper() == target
-               for t in tasks
-            )
+            has_target = any((t.get("match_key", "") or "")[:12].upper() == target for t in tasks)
             if location == "AYT" and has_target:
-               st.warning("WATER DISINFECTION KARTI TOOL SORUNU VAR")
+                st.warning("WATER DISINFECTION KARTI TOOL SORUNU VAR")
 
             # Engineering mapping (optional)
             if use_engineering and map_file is not None:
@@ -436,7 +418,7 @@ if st.button("Excel Oluştur"):
                 if kompleks_any:
                     st.warning("⚠️ Kompleks iş var (KOMPLEKS=Y/YES bulundu)")
 
-            # Summary
+            # Summary metrics
             total_mh = 0
             for t in tasks:
                 try:
@@ -463,12 +445,9 @@ if st.button("Excel Oluştur"):
                 )
                 tsv_bytes = workbook_bytes_to_tsv_bytes(filled_xlsx)
 
-                # store for persistent downloads
                 st.session_state["filled_xlsx"] = filled_xlsx
                 st.session_state["filled_tsv"] = tsv_bytes
                 st.session_state["dl_aircraft"] = aircraft
-
-                # bump version so same-name downloads don't get blocked
                 st.session_state["dl_v"] += 1
 
                 st.success("Dosyalar hazır. Aşağıdan indirebilirsin ✅")
@@ -477,7 +456,7 @@ if st.button("Excel Oluştur"):
             st.error(f"Hata: {e}")
 
 # -----------------------------
-# Persistent download buttons (do not disappear on rerun)
+# Persistent download buttons
 # -----------------------------
 if st.session_state["filled_xlsx"] is not None:
     aircraft = st.session_state["dl_aircraft"] or "IMPORT"
@@ -499,7 +478,4 @@ if st.session_state["filled_xlsx"] is not None:
             file_name=f"{aircraft} IMPORT EXCELI_v{v}.txt",
             mime="text/plain",
             key=f"dl_txt_persist_{v}",
-
         )
-
-
