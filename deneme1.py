@@ -85,83 +85,112 @@ def split_boeing_card_blocks_from_text(page_text: str):
 
     return blocks
 
-def pick_interval_value(block_text: str):
+def _to_int_num(s: str) -> int:
+    s = (s or "").strip().replace(",", "")
+    try:
+        return int(float(s))
+    except Exception:
+        return 0
+
+def pick_interval_value_from_threshold_repeat(block_text: str):
     """
-    Kart bloğunda THRESHOLD/REPEAT altındaki FH/FC/YR değerlerini arar.
-    Öncelik: FH > FC > YR
-    Dönüş: (unit, value_int, found_list)
-    found_list: [(value, unit, where), ...]
+    Kart bloğunda SADECE THRESHOLD/REPEAT çevresinden değer yakalar.
+    Öncelik: FH varsa FH, yoksa FC, yoksa YR.
     """
     if not block_text:
         return None, 0, []
 
-    up = block_text.upper()
+    lines = [ln.strip() for ln in block_text.splitlines() if ln.strip()]
+    found = []  # (value_str, unit, where)
 
-    # THRESHOLD ve REPEAT çevresinde değer yakalamak için:
-    # Basit ama etkili: block içinde geçen tüm "<num> FH/FC/YR" değerlerini alıyoruz.
-    # (Çok gerekirse sadece THRESHOLD/REPEAT sonrası bölgeye daraltırız.)
-    pattern = re.compile(r"\b(\d{1,3}(?:,\d{3})|\d+)\s(FH|FC|YR)\b", re.IGNORECASE)
-    all_found = [(m.group(1), m.group(2).upper(), "BLOCK") for m in pattern.finditer(up)]
+    # number + unit yakalayıcı
+    nu = re.compile(r"\b(\d{1,3}(?:,\d{3})|\d+)\s(FH|FC|YR)\b", re.IGNORECASE)
 
-    if not all_found:
+    for i, ln in enumerate(lines):
+        up = ln.upper()
+        if ("THRESHOLD" in up) or ("REPEAT" in up):
+            where = "THRESHOLD" if "THRESHOLD" in up else "REPEAT"
+
+            # o satır + sonraki 3 satıra bak
+            chunk = " ".join(lines[i:i+4]).upper()
+
+            for m in nu.finditer(chunk):
+                found.append((m.group(1), m.group(2).upper(), where))
+
+    if not found:
         return None, 0, []
 
-    # Öncelik kuralı: FH varsa FH, yoksa FC, yoksa YR
-    fh_vals = [_to_int_num(v) for v, u, _ in all_found if u == "FH"]
+    fh_vals = [_to_int_num(v) for v, u, _ in found if u == "FH"]
     if fh_vals:
-        return "FH", max(fh_vals), all_found
+        return "FH", max(fh_vals), found
 
-    fc_vals = [_to_int_num(v) for v, u, _ in all_found if u == "FC"]
+    fc_vals = [_to_int_num(v) for v, u, _ in found if u == "FC"]
     if fc_vals:
-        return "FC", max(fc_vals), all_found
+        return "FC", max(fc_vals), found
 
-    yr_vals = [_to_int_num(v) for v, u, _ in all_found if u == "YR"]
+    yr_vals = [_to_int_num(v) for v, u, _ in found if u == "YR"]
     if yr_vals:
-        return "YR", max(yr_vals), all_found
+        return "YR", max(yr_vals), found
 
-    return None, 0, all_found
+    return None, 0, found
 
-def extract_boeing_interval_exceedances(pdf_bytes: bytes):
+
+def extract_boeing_interval_exceedances(pdf_bytes: bytes, debug: bool = False):
     """
-    PDF genelinde Boeing task card bloklarını tarar.
-    Limit aşan kartları listeler.
+    PDF genelinde Boeing kart bloklarını tarar:
+    - Kart bloğunu BOEING CARD NO üzerinden alır (noktalı/noktasıız)
+    - Her blokta THRESHOLD/REPEAT çevresinden FH/FC/YR arar
+    - Öncelik FH>FC>YR
     """
     exceed = []
+    debug_rows = []
+
+    marker_re = re.compile(r"BOEING\s+CARD\s+NO\.?", re.IGNORECASE)
 
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         for pno, page in enumerate(pdf.pages, start=1):
             text = page.extract_text() or ""
-            blocks = split_boeing_card_blocks_from_text(text)
+            if not text:
+                continue
 
-            for card_name, block in blocks:
-                unit, val, found = pick_interval_value(block)
+            # sayfayı marker'a göre böl
+            splits = marker_re.split(text)
+            if len(splits) <= 1:
+                continue
+
+            # split sonrası bloklar: [öncesi, blok1, blok2...]
+            # Marker satırı split ile kaybolduğu için blok başına marker ekleyip analiz ediyoruz.
+            for blk in splits[1:]:
+                block = "BOEING CARD NO.\n" + blk
+
+                # Kart adı: marker'dan sonraki ilk dolu satır
+                card_name = "(CARD NAME NOT FOUND)"
+                after_lines = block.splitlines()[1:10]
+                for ln in after_lines:
+                    if ln.strip():
+                        card_name = ln.strip()
+                        break
+
+                unit, val, found = pick_interval_value_from_threshold_repeat(block)
+
+                if debug:
+                    debug_rows.append({
+                        "Page": pno,
+                        "Card": card_name,
+                        "PickedUnit": unit,
+                        "PickedValue": val,
+                        "FoundCount": len(found),
+                        "FoundSample": ", ".join([f"{v} {u} ({w})" for v,u,w in found[:6]])
+                    })
 
                 if unit == "FH" and val > 7500:
-                    exceed.append({
-                        "Page": pno,
-                        "Card": card_name,
-                        "Unit": "FH",
-                        "Value": val,
-                        "Limit": 7500
-                    })
+                    exceed.append({"Page": pno, "Card": card_name, "Unit": "FH", "Value": val, "Limit": 7500})
                 elif unit == "FC" and val > 4000:
-                    exceed.append({
-                        "Page": pno,
-                        "Card": card_name,
-                        "Unit": "FC",
-                        "Value": val,
-                        "Limit": 4000
-                    })
+                    exceed.append({"Page": pno, "Card": card_name, "Unit": "FC", "Value": val, "Limit": 4000})
                 elif unit == "YR" and val > 3:
-                    exceed.append({
-                        "Page": pno,
-                        "Card": card_name,
-                        "Unit": "YR",
-                        "Value": val,
-                        "Limit": 3
-                    })
+                    exceed.append({"Page": pno, "Card": card_name, "Unit": "YR", "Value": val, "Limit": 3})
 
-    return exceed
+    return exceed, debug_rows
 def get_location_from_package(package_name: str) -> str:
     package_name = (package_name or "").strip().upper()
     return package_name[-3:] if len(package_name) >= 3 else ""
@@ -620,6 +649,7 @@ if st.session_state["filled_xlsx"] is not None:
             mime="text/plain",
             key=f"dl_txt_persist_{v}",
         )
+
 
 
 
