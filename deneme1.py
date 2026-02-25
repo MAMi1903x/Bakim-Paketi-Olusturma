@@ -38,159 +38,6 @@ if "dl_v" not in st.session_state:
 # -----------------------------
 # Helpers
 # -----------------------------
-def _to_int_num(s: str) -> int:
-    """'7,500' -> 7500 gibi."""
-    s = (s or "").strip().replace(",", "")
-    return int(s) if s.isdigit() else 0
-
-def split_boeing_card_blocks_from_text(page_text: str):
-    """
-    Bir sayfadaki metni 'BOEING CARD NO.' üzerinden kart bloklarına böler.
-    Her blok için card_name (BOEING CARD NO. altındaki ilk dolu satır) çıkarır.
-    """
-    if not page_text:
-        return []
-
-    marker = "BOEING CARD NO."
-    up = page_text.upper()
-    idxs = []
-    start = 0
-    while True:
-        i = up.find(marker, start)
-        if i == -1:
-            break
-        idxs.append(i)
-        start = i + len(marker)
-
-    if not idxs:
-        return []
-
-    blocks = []
-    for k, i in enumerate(idxs):
-        j = idxs[k + 1] if k + 1 < len(idxs) else len(page_text)
-        block = page_text[i:j]
-
-        # card name: marker'dan sonraki satırlarda ilk dolu satır
-        after = block.splitlines()[1:]  # marker satırından sonraki satırlar
-        card_name = ""
-        for line in after:
-            line2 = line.strip()
-            if line2:
-                card_name = line2
-                break
-        if not card_name:
-            card_name = "(CARD NAME NOT FOUND)"
-
-        blocks.append((card_name, block))
-
-    return blocks
-
-def _to_int_num(s: str) -> int:
-    s = (s or "").strip().replace(",", "")
-    try:
-        return int(float(s))
-    except Exception:
-        return 0
-
-def pick_interval_value_from_threshold_repeat(block_text: str):
-    """
-    Kart bloğunda SADECE THRESHOLD/REPEAT çevresinden değer yakalar.
-    Öncelik: FH varsa FH, yoksa FC, yoksa YR.
-    """
-    if not block_text:
-        return None, 0, []
-
-    lines = [ln.strip() for ln in block_text.splitlines() if ln.strip()]
-    found = []  # (value_str, unit, where)
-
-    # number + unit yakalayıcı
-    nu = re.compile(r"\b(\d{1,3}(?:,\d{3})|\d+)\s(FH|FC|YR)\b", re.IGNORECASE)
-
-    for i, ln in enumerate(lines):
-        up = ln.upper()
-        if ("THRESHOLD" in up) or ("REPEAT" in up):
-            where = "THRESHOLD" if "THRESHOLD" in up else "REPEAT"
-
-            # o satır + sonraki 3 satıra bak
-            chunk = " ".join(lines[i:i+4]).upper()
-
-            for m in nu.finditer(chunk):
-                found.append((m.group(1), m.group(2).upper(), where))
-
-    if not found:
-        return None, 0, []
-
-    fh_vals = [_to_int_num(v) for v, u, _ in found if u == "FH"]
-    if fh_vals:
-        return "FH", max(fh_vals), found
-
-    fc_vals = [_to_int_num(v) for v, u, _ in found if u == "FC"]
-    if fc_vals:
-        return "FC", max(fc_vals), found
-
-    yr_vals = [_to_int_num(v) for v, u, _ in found if u == "YR"]
-    if yr_vals:
-        return "YR", max(yr_vals), found
-
-    return None, 0, found
-
-
-def extract_boeing_interval_exceedances(pdf_bytes: bytes, debug: bool = False):
-    """
-    PDF genelinde Boeing kart bloklarını tarar:
-    - Kart bloğunu BOEING CARD NO üzerinden alır (noktalı/noktasıız)
-    - Her blokta THRESHOLD/REPEAT çevresinden FH/FC/YR arar
-    - Öncelik FH>FC>YR
-    """
-    exceed = []
-    debug_rows = []
-
-    marker_re = re.compile(r"BOEING\s+CARD\s+NO\.?", re.IGNORECASE)
-
-    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-        for pno, page in enumerate(pdf.pages, start=1):
-            text = page.extract_text() or ""
-            if not text:
-                continue
-
-            # sayfayı marker'a göre böl
-            splits = marker_re.split(text)
-            if len(splits) <= 1:
-                continue
-
-            # split sonrası bloklar: [öncesi, blok1, blok2...]
-            # Marker satırı split ile kaybolduğu için blok başına marker ekleyip analiz ediyoruz.
-            for blk in splits[1:]:
-                block = "BOEING CARD NO.\n" + blk
-
-                # Kart adı: marker'dan sonraki ilk dolu satır
-                card_name = "(CARD NAME NOT FOUND)"
-                after_lines = block.splitlines()[1:10]
-                for ln in after_lines:
-                    if ln.strip():
-                        card_name = ln.strip()
-                        break
-
-                unit, val, found = pick_interval_value_from_threshold_repeat(block)
-
-                if debug:
-                    debug_rows.append({
-                        "Page": pno,
-                        "Card": card_name,
-                        "PickedUnit": unit,
-                        "PickedValue": val,
-                        "FoundCount": len(found),
-                        "FoundSample": ", ".join([f"{v} {u} ({w})" for v,u,w in found[:6]])
-                    })
-
-                if unit == "FH" and val > 7500:
-                    exceed.append({"Page": pno, "Card": card_name, "Unit": "FH", "Value": val, "Limit": 7500})
-                elif unit == "FC" and val > 4000:
-                    exceed.append({"Page": pno, "Card": card_name, "Unit": "FC", "Value": val, "Limit": 4000})
-                elif unit == "YR" and val > 3:
-                    exceed.append({"Page": pno, "Card": card_name, "Unit": "YR", "Value": val, "Limit": 3})
-
-    return exceed, debug_rows
 def get_location_from_package(package_name: str) -> str:
     package_name = (package_name or "").strip().upper()
     return package_name[-3:] if len(package_name) >= 3 else ""
@@ -258,9 +105,10 @@ def safe_cell_str(v) -> str:
     return str(v).replace("\t", " ").replace("\n", " ").replace("\r", " ")
 
 # -----------------------------
-# Cover info (Type Of Work + Registration)
+# Cover info
 # -----------------------------
 def extract_cover_info(full_text: str):
+    """Paket: Type Of Work, Tescil: A/C Type / Registration"""
     package_name = ""
     aircraft = ""
 
@@ -275,6 +123,10 @@ def extract_cover_info(full_text: str):
     return aircraft, package_name
 
 def detect_aircraft_family_from_cover(pdf_bytes: bytes):
+    """
+    Cover Page'deki 'A/C Type / Registration' alanından ilk 4 haneye göre
+    B737NG (B73N) / B737MAX (B73M) tespiti yapar.
+    """
     full_text = ""
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         for page in pdf.pages:
@@ -297,7 +149,7 @@ def detect_aircraft_family_from_cover(pdf_bytes: bytes):
     return "UNKNOWN", f"⚠️ Uçak tipi tanınamadı (ilk 4 hane: {prefix4})"
 
 # -----------------------------
-# Summary detection (robust)
+# Summary table detection (robust)
 # -----------------------------
 def is_summary_page(page_text: str) -> bool:
     return "SUMMARY" in (page_text or "").upper()
@@ -306,6 +158,7 @@ def normalize_colname(c) -> str:
     return str(c).strip().upper() if c is not None else ""
 
 def find_best_columns(df_cols):
+    """Esnek kolon bulma: Description, Est.MH, W/O & Reference"""
     desc_col = next((c for c in df_cols if "DESC" in normalize_colname(c)), None)
     mh_col = next((c for c in df_cols if "MH" in normalize_colname(c)), None)
 
@@ -318,10 +171,15 @@ def find_best_columns(df_cols):
     return desc_col, mh_col, ref_col
 
 def table_looks_like_summary(header_row) -> bool:
+    """Summary tablosunu ayır: DESC + MH + (REFER veya W/O)"""
     header = [normalize_colname(h) for h in header_row]
     has_desc = any("DESC" in h for h in header)
     has_mh = any("MH" in h for h in header)
-    has_ref = any("REFER" in h for h in header) or any("W/O" in h for h in header) or any("WO" in h.replace(" ", "") for h in header)
+    has_ref = (
+        any("REFER" in h for h in header)
+        or any("W/O" in h for h in header)
+        or any("WO" in h.replace(" ", "") for h in header)
+    )
     return has_desc and has_mh and has_ref
 
 def extract_summary_tasks(pdf_bytes: bytes):
@@ -412,15 +270,11 @@ def load_engineering_mapping(uploaded_excel):
     df = pd.read_excel(uploaded_excel)
     cols = {str(c).strip().upper(): c for c in df.columns}
 
-    if "DESCRIPTION" not in cols and "DESCRIPTION " not in cols:
-        # case-insensitive yakalama
-        desc_guess = next((k for k in cols.keys() if k.strip().upper() == "DESCRIPTION"), None)
-        if not desc_guess:
-            raise KeyError("Mühendislik değerlendirmesi Excel'inde DESCRIPTION sütunu yok.")
-        desc_col = cols[desc_guess]
-    else:
-        desc_col = cols.get("DESCRIPTION", cols.get("DESCRIPTION "))
+    desc_col_key = next((k for k in cols.keys() if k.strip().upper() == "DESCRIPTION"), None)
+    if not desc_col_key:
+        raise KeyError("Mühendislik değerlendirmesi Excel'inde DESCRIPTION sütunu yok.")
 
+    desc_col = cols[desc_col_key]
     cmt_col = cols.get("CMT")
     imt_col = cols.get("IMT")
     cdccl_col = cols.get("CDCCL")
@@ -520,6 +374,119 @@ def workbook_bytes_to_tsv_bytes(xlsx_bytes: bytes) -> bytes:
     return ("\n".join(lines)).encode("utf-8")
 
 # -----------------------------
+# Boeing interval control (ONLY NG)
+# -----------------------------
+def _to_int_num(s: str) -> int:
+    s = (s or "").strip().replace(",", "")
+    try:
+        return int(float(s))
+    except Exception:
+        return 0
+
+def scan_threshold_repeat_values(block_text: str):
+    """
+    Kart bloğunda THRESHOLD/REPEAT satırı ve sonraki 3 satırdan
+    FH/FC/YR değerlerini toplar. (max değerleri döner)
+    """
+    if not block_text:
+        return {"FH": 0, "FC": 0, "YR": 0, "found": []}
+
+    lines = [ln.strip() for ln in block_text.splitlines() if ln.strip()]
+    nu = re.compile(r"\b(\d{1,3}(?:,\d{3})|\d+)\s(FH|FC|YR)\b", re.IGNORECASE)
+
+    found = []  # (value_str, unit, where)
+    maxv = {"FH": 0, "FC": 0, "YR": 0}
+
+    for i, ln in enumerate(lines):
+        up = ln.upper()
+        if ("THRESHOLD" in up) or ("REPEAT" in up):
+            where = "THRESHOLD" if "THRESHOLD" in up else "REPEAT"
+            chunk = " ".join(lines[i:i+4]).upper()
+
+            for m in nu.finditer(chunk):
+                v_str = m.group(1)
+                unit = m.group(2).upper()
+                v = _to_int_num(v_str)
+                found.append((v_str, unit, where))
+                if unit in maxv:
+                    maxv[unit] = max(maxv[unit], v)
+
+    return {"FH": maxv["FH"], "FC": maxv["FC"], "YR": maxv["YR"], "found": found}
+
+def extract_boeing_interval_exceedances(pdf_bytes: bytes, debug: bool = False):
+    """
+    Kart bazında FH/FC/YR max değerlerini çıkarır.
+    Limit aşan birim varsa (hangisi aşıyorsa), öncelik: FH>FC>YR (aşanlar içinde).
+    """
+    exceed = []
+    debug_rows = []
+
+    marker_re = re.compile(r"BOEING\s+CARD\s+NO\.?", re.IGNORECASE)
+
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        for pno, page in enumerate(pdf.pages, start=1):
+            text = page.extract_text() or ""
+            if not text:
+                continue
+
+            splits = marker_re.split(text)
+            if len(splits) <= 1:
+                continue
+
+            for blk in splits[1:]:
+                block = "BOEING CARD NO.\n" + blk
+
+                # Kart adı: marker'dan sonraki ilk dolu satır
+                card_name = "(CARD NAME NOT FOUND)"
+                after_lines = block.splitlines()[1:12]
+                for ln in after_lines:
+                    if ln.strip():
+                        card_name = ln.strip()
+                        break
+
+                vals = scan_threshold_repeat_values(block)
+
+                over_fh = vals["FH"] > 7500
+                over_fc = vals["FC"] > 4000
+                over_yr = vals["YR"] > 3
+
+                show_unit = None
+                show_value = 0
+                show_limit = 0
+
+                if over_fh:
+                    show_unit, show_value, show_limit = "FH", vals["FH"], 7500
+                elif over_fc:
+                    show_unit, show_value, show_limit = "FC", vals["FC"], 4000
+                elif over_yr:
+                    show_unit, show_value, show_limit = "YR", vals["YR"], 3
+
+                if show_unit:
+                    exceed.append({
+                        "Page": pno,
+                        "Card": card_name,
+                        "Unit": show_unit,
+                        "Value": show_value,
+                        "Limit": show_limit,
+                        "FH_max": vals["FH"],
+                        "FC_max": vals["FC"],
+                        "YR_max": vals["YR"],
+                    })
+
+                if debug:
+                    debug_rows.append({
+                        "Page": pno,
+                        "Card": card_name,
+                        "FH_max": vals["FH"],
+                        "FC_max": vals["FC"],
+                        "YR_max": vals["YR"],
+                        "FoundCount": len(vals["found"]),
+                        "FoundSample": ", ".join([f"{v} {u} ({w})" for v, u, w in vals["found"][:6]])
+                    })
+
+    return exceed, debug_rows
+
+# -----------------------------
 # Main action: compute & store
 # -----------------------------
 if st.button("Excel Oluştur"):
@@ -529,9 +496,8 @@ if st.button("Excel Oluştur"):
         st.error("Mühendislik değerlendirmesi seçildi ama Excel yüklenmedi.")
     else:
         try:
-            # ✅ PDF BYTES FIX (seek hatasını bitirir)
             pdf_bytes = pdf_file.getvalue()
-            # Uçak tipi bilgisi
+
             family, msg = detect_aircraft_family_from_cover(pdf_bytes)
             if family == "B737MAX":
                 st.info(msg)
@@ -541,31 +507,30 @@ if st.button("Excel Oluştur"):
                 st.warning(msg)
 
             aircraft, package_name, tasks = extract_summary_tasks(pdf_bytes)
-            # -------------------------------
-            # Boeing Interval Kontrolü (SADECE NG)
-            # -------------------------------
-            if family == "B737NG":
-                st.write("NG tespit edildi → Interval kontrol başlatılıyor")
-            
-                exceed = extract_boeing_interval_exceedances(pdf_bytes)
-            
-                st.subheader("Boeing Task Card Interval Kontrolü (B737NG)")
-            
-                if exceed:
-                    st.warning(f"⚠️ Limit aşan kart sayısı: {len(exceed)}")
-                    st.dataframe(pd.DataFrame(exceed), use_container_width=True)
-                else:
-                    st.success("✅ Interval limit aşımı bulunmadı.")
-            
-            else:
-                st.write("NG değil → Interval kontrol yapılmadı")
 
             # Lokasyon + AYT uyarısı
             location = get_location_from_package(package_name)
             target = "38-070-00-01"
             has_target = any((t.get("match_key", "") or "")[:12].upper() == target for t in tasks)
             if location == "AYT" and has_target:
-                st.warning("‼️WATER DISINFECTION KARTI TOOL SORUNU VAR | 38-070-00-01 SEBEBİYLE‼️")
+                st.warning("WATER DISINFECTION KARTI TOOL SORUNU VAR")
+
+            # Boeing interval kontrolü (SADECE NG)
+            if family == "B737NG":
+                st.subheader("Boeing Task Card Interval Kontrolü (B737NG)")
+                exceed, debug_rows = extract_boeing_interval_exceedances(pdf_bytes, debug=True)
+
+                df_ex = pd.DataFrame(exceed)
+                if not df_ex.empty:
+                    st.warning(f"⚠️ Limit aşan kart sayısı: {len(df_ex)}")
+                    st.dataframe(df_ex, use_container_width=True)
+                else:
+                    st.info("✅ Interval limit aşımı bulunmadı.")
+
+                with st.expander("Interval Debug (kart başına yakalanan değerler)"):
+                    st.dataframe(pd.DataFrame(debug_rows), use_container_width=True)
+            else:
+                st.info("Boeing interval kontrolü yalnızca B737NG için çalışır.")
 
             # Engineering mapping (optional)
             if use_engineering and map_file is not None:
@@ -649,7 +614,3 @@ if st.session_state["filled_xlsx"] is not None:
             mime="text/plain",
             key=f"dl_txt_persist_{v}",
         )
-
-
-
-
