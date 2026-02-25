@@ -38,6 +38,9 @@ if "dl_v" not in st.session_state:
 # -----------------------------
 # Helpers
 # -----------------------------
+def get_location_from_package(package_name: str) -> str:
+   package_name = (package_name or "").strip().upper()
+   return package_name[-3:] if len(package_name) >= 3 else ""
 def normalize_skill(skill_value):
     skill_value = str(skill_value).strip().upper()
 
@@ -144,7 +147,7 @@ def safe_cell_str(v) -> str:
 def extract_cover_info(full_text: str):
     """Paket: Type Of Work, Tescil: A/C Type / Registration"""
     package_name = ""
-    aircraft = ""
+     = ""
 
     m_type = re.search(r"Type\s*Of\s*Work\s*:?\s*(.+)", full_text, re.IGNORECASE)
     if m_type:
@@ -152,9 +155,9 @@ def extract_cover_info(full_text: str):
 
     m_reg = re.search(r"A/C Type\s*/\s*Registration\s*(.+)", full_text, re.IGNORECASE)
     if m_reg:
-        aircraft = m_reg.group(1).split("/")[-1].strip()
+         = m_reg.group(1).split("/")[-1].strip()
 
-    return aircraft, package_name
+    return , package_name
 
 
 # -----------------------------
@@ -207,7 +210,7 @@ def extract_summary_tasks(pdf_file_obj):
             if t:
                 full_text += t + "\n"
 
-    aircraft, package_name = extract_cover_info(full_text)
+    , package_name = extract_cover_info(full_text)
 
     camo_prefix = f"PLEASE PERFORM CAMO WP: {package_name} | "
     camo_prefix = camo_prefix.upper().replace("İ", "I")
@@ -270,7 +273,7 @@ def extract_summary_tasks(pdf_file_obj):
                         "cdccl": "N",
                     })
 
-    return aircraft, package_name, tasks
+    return , package_name, tasks
 
 
 # -----------------------------
@@ -318,7 +321,7 @@ def load_engineering_mapping(uploaded_excel):
 # -----------------------------
 # Fill template
 # -----------------------------
-def fill_template_excel(template_bytes, aircraft, package_name, tasks, wo_number):
+def fill_template_excel(template_bytes, , package_name, tasks, wo_number):
     wb = load_workbook(io.BytesIO(template_bytes))
     ws = wb.active
 
@@ -340,7 +343,7 @@ def fill_template_excel(template_bytes, aircraft, package_name, tasks, wo_number
     for i, t in enumerate(tasks):
         r = start_row + i
 
-        ws.cell(r, col("Aircraf")).value = aircraft
+        ws.cell(r, col("Aircraf")).value = 
         ws.cell(r, col("Check")).value = package_name
         ws.cell(r, col("wo")).value = wo_number
         ws.cell(r, col("chapter")).value = 5
@@ -389,7 +392,7 @@ def workbook_bytes_to_tsv_bytes(xlsx_bytes: bytes) -> bytes:
 # Main action: compute & store
 # -----------------------------
 if st.button("Excel Oluştur"):
-    family, msg = detect_aircraft_family_from_cover(pdf_file)
+    family, msg = detect__family_from_cover(pdf_file)
     if family == "B737MAX":
         st.info(msg)
     elif family == "B737NG":
@@ -403,6 +406,14 @@ if st.button("Excel Oluştur"):
     else:
         try:
             aircraft, package_name, tasks = extract_summary_tasks(pdf_file)
+            location = get_location_from_package(package_name)
+            target = "38-070-00-01"
+            has_target = any(
+               (t.get("match_key", "") or "")[:12].upper() == target
+               for t in tasks
+            )
+            if location == "AYT" and has_target:
+               st.warning("WATER DISINFECTION KARTI TOOL SORUNU VAR")
 
             # Engineering mapping (optional)
             if use_engineering and map_file is not None:
@@ -433,11 +444,12 @@ if st.button("Excel Oluştur"):
                 except Exception:
                     pass
 
-            c1, c2, c3, c4 = st.columns(4)
+            c1, c2, c3, c4, c5 = st.columns(5)
             c1.metric("Toplam İş", len(tasks))
             c2.metric("Toplam Man Hour", total_mh)
             c3.metric("rII=Y", sum(1 for t in tasks if t["rII"] == "Y"))
             c4.metric("Critical=Y", sum(1 for t in tasks if t["critical_task"] == "Y"))
+            c5.metric("Lokasyon", location or "-")
 
             if len(tasks) == 0:
                 st.error("Summary tablosundan hiç iş çekilemedi.")
@@ -489,4 +501,5 @@ if st.session_state["filled_xlsx"] is not None:
             key=f"dl_txt_persist_{v}",
 
         )
+
 
