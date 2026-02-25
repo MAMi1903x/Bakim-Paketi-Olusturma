@@ -502,19 +502,6 @@ if st.button("Excel Oluştur"):
         try:
             # ✅ PDF BYTES FIX (seek hatasını bitirir)
             pdf_bytes = pdf_file.getvalue()
-            # --- Boeing interval kontrolü (SADECE B737NG) ---
-            if family == "B737NG":
-                exceed = extract_boeing_interval_exceedances(pdf_bytes)
-            
-                st.subheader("Boeing Task Card Interval Kontrolü (Sadece B737NG)")
-                if exceed:
-                    st.warning(f"⚠️ Limit aşan kart sayısı: {len(exceed)}")
-                    st.dataframe(pd.DataFrame(exceed), use_container_width=True)
-                else:
-                    st.success("✅ Boeing task card interval limit aşımı bulunmadı.")
-            else:
-                st.info("Boeing Task Card interval kontrolü yalnızca B737NG için çalışır.")
-
             # Uçak tipi bilgisi
             family, msg = detect_aircraft_family_from_cover(pdf_bytes)
             if family == "B737MAX":
@@ -525,6 +512,24 @@ if st.button("Excel Oluştur"):
                 st.warning(msg)
 
             aircraft, package_name, tasks = extract_summary_tasks(pdf_bytes)
+            # -------------------------------
+            # Boeing Interval Kontrolü (SADECE NG)
+            # -------------------------------
+            if family == "B737NG":
+                st.write("NG tespit edildi → Interval kontrol başlatılıyor")
+            
+                exceed = extract_boeing_interval_exceedances(pdf_bytes)
+            
+                st.subheader("Boeing Task Card Interval Kontrolü (B737NG)")
+            
+                if exceed:
+                    st.warning(f"⚠️ Limit aşan kart sayısı: {len(exceed)}")
+                    st.dataframe(pd.DataFrame(exceed), use_container_width=True)
+                else:
+                    st.success("✅ Interval limit aşımı bulunmadı.")
+            
+            else:
+                st.write("NG değil → Interval kontrol yapılmadı")
 
             # Lokasyon + AYT uyarısı
             location = get_location_from_package(package_name)
@@ -615,5 +620,6 @@ if st.session_state["filled_xlsx"] is not None:
             mime="text/plain",
             key=f"dl_txt_persist_{v}",
         )
+
 
 
