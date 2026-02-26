@@ -400,7 +400,7 @@ if st.button("Excel Oluştur"):
             target = "38-070-00-01"
             has_target = any((t.get("match_key", "") or "")[:12].upper() == target for t in tasks)
             if location == "AYT" and has_target:
-                st.warning("WATER DISINFECTION KARTI TOOL SORUNU VAR")
+                st.warning("‼️WATER DISINFECTION KARTI TOOL SORUNU VAR | 38-070-00-01 SEBEBİYLE‼️")
 
             # Engineering mapping (optional)
             if use_engineering and map_file is not None:
@@ -484,3 +484,4 @@ if st.session_state["filled_xlsx"] is not None:
             mime="text/plain",
             key=f"dl_txt_persist_{v}",
         )
+
