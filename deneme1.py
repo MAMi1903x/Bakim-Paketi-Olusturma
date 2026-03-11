@@ -104,6 +104,19 @@ def safe_cell_str(v) -> str:
         return ""
     return str(v).replace("\t", " ").replace("\n", " ").replace("\r", " ")
 
+def extract_card_no(text: str) -> str:
+    if not text:
+        return ""
+    m = re.search(r"\b\d{2}-\d{3}-\d{2}-\d{2}\b", str(text))
+    return m.group(0) if m else ""
+
+def normalize_text_for_search(text: str) -> str:
+    if not text:
+        return ""
+    txt = str(text).upper().replace("İ", "I")
+    txt = re.sub(r"\s+", " ", txt)
+    return txt.strip()
+
 # -----------------------------
 # Cover info
 # -----------------------------
@@ -231,6 +244,8 @@ def extract_summary_tasks(pdf_bytes: bytes):
                     if not raw_desc or raw_desc.lower() == "none":
                         continue
 
+                    card_no = extract_card_no(raw_desc)
+
                     mh, skill = parse_mh_and_skill(row.get(mh_col, ""))
                     if mh in ("", "0"):
                         mh = "1"
@@ -252,6 +267,7 @@ def extract_summary_tasks(pdf_bytes: bytes):
                         final_desc = camo_prefix + raw_desc
 
                     tasks.append({
+                        "card_no": card_no,
                         "description": final_desc,
                         "match_key": raw_desc,
                         "man_hour": mh,
@@ -259,9 +275,187 @@ def extract_summary_tasks(pdf_bytes: bytes):
                         "rII": "N",
                         "critical_task": "N",
                         "cdccl": "N",
+                        "intervals": [],
+                        "interval_exceed": "N",
+                        "interval_summary": "",
                     })
 
     return aircraft, package_name, tasks
+
+# -----------------------------
+# Interval parsing
+# -----------------------------
+def interval_exceeds(interval_type, value):
+    t = str(interval_type).upper().strip()
+    try:
+        v = float(value)
+    except Exception:
+        return False
+
+    if t == "FH":
+        return v >= 15000
+    elif t == "FC":
+        return v >= 4500
+    elif t == "YR":
+        return v >= 3
+    return False
+
+def convert_mo_to_yr(mo_value):
+    try:
+        return float(mo_value) / 12.0
+    except Exception:
+        return None
+
+def extract_section_intervals(section_text, source_name):
+    """
+    Section içinden FH/FC/YR/MO interval değerlerini çıkarır.
+    MO ayrıca YR'a çevrilmiş olarak da sonuç listesine eklenir.
+    """
+    results = []
+    if not section_text:
+        return results
+
+    found = re.findall(r"(\d+(?:\.\d+)?)\s*(FH|FC|YR|MO)\b", section_text, re.IGNORECASE)
+
+    for value, typ in found:
+        try:
+            v = float(value)
+        except Exception:
+            continue
+
+        t = typ.upper()
+
+        if t == "MO":
+            yr_val = convert_mo_to_yr(v)
+            if yr_val is None:
+                continue
+
+            results.append({
+                "type": "YR",
+                "value": yr_val,
+                "source": source_name,
+                "raw_type": "MO",
+                "raw_value": v,
+                "exceed": interval_exceeds("YR", yr_val)
+            })
+        else:
+            results.append({
+                "type": t,
+                "value": v,
+                "source": source_name,
+                "raw_type": t,
+                "raw_value": v,
+                "exceed": interval_exceeds(t, v)
+            })
+
+    return results
+
+def extract_intervals_from_page(page_text):
+    txt = normalize_text_for_search(page_text)
+    intervals = []
+
+    # THRESHOLD bölümü
+    m_threshold = re.search(
+        r"THRESHOLD(.*?)(REPEAT|ZONE|ACCESS|TASK|WORK AREA|SKILL|APPLICABILITY|REFERENCES|NOTE|MAN-HOURS|MH EST)",
+        txt
+    )
+    if m_threshold:
+        intervals.extend(extract_section_intervals(m_threshold.group(1), "THRESHOLD"))
+
+    # REPEAT bölümü
+    m_repeat = re.search(
+        r"REPEAT(.*?)(ZONE|ACCESS|TASK|WORK AREA|SKILL|APPLICABILITY|REFERENCES|NOTE|MAN-HOURS|MH EST|END OF TASK|DESCRIPTION)",
+        txt
+    )
+    if m_repeat:
+        intervals.extend(extract_section_intervals(m_repeat.group(1), "REPEAT"))
+
+    # Eğer section bazlı yakalayamazsa, fallback
+    if not intervals:
+        intervals.extend(extract_section_intervals(txt, "PAGE_FALLBACK"))
+
+    return deduplicate_intervals(intervals)
+
+def deduplicate_intervals(intervals):
+    seen = set()
+    unique = []
+
+    for x in intervals:
+        key = (
+            x.get("type"),
+            round(float(x.get("value", 0)), 6),
+            x.get("source"),
+            x.get("raw_type"),
+            round(float(x.get("raw_value", 0)), 6),
+        )
+        if key not in seen:
+            seen.add(key)
+            unique.append(x)
+
+    return unique
+
+def build_card_interval_map(pdf_bytes):
+    """
+    PDF'in tüm sayfalarını tarar.
+    Kart numarası bulunan sayfalarda interval bilgilerini toplar.
+    """
+    card_map = {}
+
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        for page in pdf.pages:
+            text = page.extract_text() or ""
+            txt = normalize_text_for_search(text)
+
+            card_numbers = re.findall(r"\b\d{2}-\d{3}-\d{2}-\d{2}\b", txt)
+            if not card_numbers:
+                continue
+
+            intervals = extract_intervals_from_page(txt)
+            if not intervals:
+                continue
+
+            for card_no in set(card_numbers):
+                if card_no not in card_map:
+                    card_map[card_no] = []
+
+                card_map[card_no].extend(intervals)
+
+    # Her kart için duplicate temizliği
+    for card_no in list(card_map.keys()):
+        card_map[card_no] = deduplicate_intervals(card_map[card_no])
+
+    return card_map
+
+def format_interval_summary(intervals):
+    if not intervals:
+        return ""
+
+    parts = []
+    for x in intervals:
+        raw_type = x.get("raw_type", x.get("type", ""))
+        raw_value = x.get("raw_value", x.get("value", ""))
+        conv_type = x.get("type", "")
+        conv_value = x.get("value", "")
+        source = x.get("source", "")
+        exceed = "Y" if x.get("exceed") else "N"
+
+        def fmt_num(n):
+            try:
+                n = float(n)
+                if n.is_integer():
+                    return str(int(n))
+                return f"{n:.2f}".rstrip("0").rstrip(".")
+            except Exception:
+                return str(n)
+
+        if raw_type == "MO":
+            part = f"{source}:{fmt_num(raw_value)}MO=>{fmt_num(conv_value)}YR({exceed})"
+        else:
+            part = f"{source}:{fmt_num(conv_value)}{conv_type}({exceed})"
+
+        parts.append(part)
+
+    return " | ".join(parts)
 
 # -----------------------------
 # Engineering mapping
@@ -384,6 +578,7 @@ if st.button("Excel Oluştur"):
     else:
         try:
             pdf_bytes = pdf_file.getvalue()
+            template_bytes = template_file.getvalue()
 
             family, msg = detect_aircraft_family_from_cover(pdf_bytes)
             if family == "B737MAX":
@@ -394,6 +589,26 @@ if st.button("Excel Oluştur"):
                 st.warning(msg)
 
             aircraft, package_name, tasks = extract_summary_tasks(pdf_bytes)
+
+            # Interval map oluştur
+            card_interval_map = build_card_interval_map(pdf_bytes)
+
+            # Task'lere interval işle
+            interval_found_count = 0
+            interval_exceed_count = 0
+
+            for t in tasks:
+                card_no = t.get("card_no", "")
+                intervals = card_interval_map.get(card_no, []) if card_no else []
+
+                t["intervals"] = intervals
+                t["interval_exceed"] = "Y" if any(x.get("exceed") for x in intervals) else "N"
+                t["interval_summary"] = format_interval_summary(intervals)
+
+                if intervals:
+                    interval_found_count += 1
+                if t["interval_exceed"] == "Y":
+                    interval_exceed_count += 1
 
             # Lokasyon + AYT uyarısı
             location = get_location_from_package(package_name)
@@ -431,18 +646,41 @@ if st.button("Excel Oluştur"):
                 except Exception:
                     pass
 
-            c1, c2, c3, c4, c5 = st.columns(5)
+            c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
             c1.metric("Toplam İş", len(tasks))
             c2.metric("Toplam Man Hour", total_mh)
             c3.metric("rII=Y", sum(1 for t in tasks if t["rII"] == "Y"))
             c4.metric("Critical=Y", sum(1 for t in tasks if t["critical_task"] == "Y"))
             c5.metric("Lokasyon", location or "-")
+            c6.metric("Interval Bulunan", interval_found_count)
+            c7.metric("Limit Aşan", interval_exceed_count)
+
+            # Interval analiz tablosu
+            interval_rows = []
+            for t in tasks:
+                if t.get("card_no"):
+                    interval_rows.append({
+                        "Card No": t.get("card_no", ""),
+                        "Description": t.get("match_key", ""),
+                        "Interval Summary": t.get("interval_summary", ""),
+                        "Interval Exceed": t.get("interval_exceed", "N")
+                    })
+
+            if interval_rows:
+                st.subheader("Interval Analizi")
+                interval_df = pd.DataFrame(interval_rows)
+                st.dataframe(interval_df, use_container_width=True)
+
+                exceed_df = interval_df[interval_df["Interval Exceed"] == "Y"].copy()
+                if not exceed_df.empty:
+                    st.subheader("Limit Aşan Kartlar")
+                    st.dataframe(exceed_df, use_container_width=True)
 
             if len(tasks) == 0:
                 st.error("Summary tablosundan hiç iş çekilemedi.")
             else:
                 filled_xlsx = fill_template_excel(
-                    template_bytes=template_file.read(),
+                    template_bytes=template_bytes,
                     aircraft=aircraft,
                     package_name=package_name,
                     tasks=tasks,
@@ -484,4 +722,3 @@ if st.session_state["filled_xlsx"] is not None:
             mime="text/plain",
             key=f"dl_txt_persist_{v}",
         )
-
