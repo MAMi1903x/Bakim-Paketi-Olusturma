@@ -293,13 +293,26 @@ STOP_WORDS = {
     "PLANNING INFORMATION", "A. EFFECTIVITY"
 }
 
-def interval_exceeds(interval_type, value):
+def interval_exceeds(interval_type, value, aircraft_family=None):
     t = str(interval_type).upper().strip()
     try:
         v = float(value)
     except Exception:
         return False
 
+    family = (aircraft_family or "").upper().strip()
+
+    # B737MAX kuralları
+    if family == "B737MAX":
+        if t == "FH":
+            return v > 1600
+        elif t == "FC":
+            return v > 150
+        elif t == "DY":
+            return v > 120
+        return False
+
+    # Varsayılan / B737NG kuralları
     if t == "FH":
         return v >= 15000
     elif t == "FC":
@@ -314,12 +327,13 @@ def convert_mo_to_yr(mo_value):
     except Exception:
         return None
 
-def extract_intervals_from_chunk(chunk_text, source_name):
+def extract_intervals_from_chunk(chunk_text, source_name, aircraft_family=None):
     results = []
     if not chunk_text:
         return results
 
-    found = re.findall(r"(\d+(?:\.\d+)?)\s*(FH|FC|YR|MO)\b", chunk_text, re.IGNORECASE)
+    found = re.findall(r"(\d+(?:\.\d+)?)\s*(FH|FC|YR|MO|DY)\b", chunk_text, re.IGNORECASE)
+
     for value, typ in found:
         try:
             v = float(value)
@@ -327,6 +341,7 @@ def extract_intervals_from_chunk(chunk_text, source_name):
             continue
 
         t = typ.upper()
+
         if t == "MO":
             yr_val = convert_mo_to_yr(v)
             if yr_val is None:
@@ -337,7 +352,7 @@ def extract_intervals_from_chunk(chunk_text, source_name):
                 "source": source_name,
                 "raw_type": "MO",
                 "raw_value": v,
-                "exceed": interval_exceeds("YR", yr_val)
+                "exceed": interval_exceeds("YR", yr_val, aircraft_family)
             })
         else:
             results.append({
@@ -346,8 +361,9 @@ def extract_intervals_from_chunk(chunk_text, source_name):
                 "source": source_name,
                 "raw_type": t,
                 "raw_value": v,
-                "exceed": interval_exceeds(t, v)
+                "exceed": interval_exceeds(t, v, aircraft_family)
             })
+
     return results
 
 def deduplicate_intervals(intervals):
@@ -369,10 +385,6 @@ def deduplicate_intervals(intervals):
     return unique
 
 def collect_labeled_section(lines, label):
-    """
-    THRESHOLD / REPEAT satırını bulur, sonraki birkaç satırı da toplar.
-    Böylece 1250 FC ve 8 MO gibi alt satırlara kaçan değerler yakalanır.
-    """
     chunks = []
     n = len(lines)
 
@@ -384,7 +396,6 @@ def collect_labeled_section(lines, label):
 
         buf = [up]
 
-        # Aynı satırdan sonra gelen satırlar da section içine alınır
         for j in range(i + 1, min(i + 8, n)):
             nxt = normalize_text_for_search(lines[j])
             if not nxt:
@@ -399,7 +410,7 @@ def collect_labeled_section(lines, label):
 
     return chunks
 
-def extract_intervals_from_page(page_text):
+def extract_intervals_from_page(page_text, aircraft_family=None):
     intervals = []
     if not page_text:
         return intervals
@@ -410,15 +421,14 @@ def extract_intervals_from_page(page_text):
     repeat_chunks = collect_labeled_section(lines, "REPEAT")
 
     for chunk in threshold_chunks:
-        intervals.extend(extract_intervals_from_chunk(chunk, "THRESHOLD"))
+        intervals.extend(extract_intervals_from_chunk(chunk, "THRESHOLD", aircraft_family))
 
     for chunk in repeat_chunks:
-        intervals.extend(extract_intervals_from_chunk(chunk, "REPEAT"))
+        intervals.extend(extract_intervals_from_chunk(chunk, "REPEAT", aircraft_family))
 
-    # Eğer labeled section'dan bir şey çıkmadıysa fallback
     if not intervals:
         txt = normalize_text_for_search(page_text)
-        intervals.extend(extract_intervals_from_chunk(txt, "PAGE_FALLBACK"))
+        intervals.extend(extract_intervals_from_chunk(txt, "PAGE_FALLBACK", aircraft_family))
 
     return deduplicate_intervals(intervals)
 
@@ -435,7 +445,7 @@ def is_task_card_like_page(page_text: str) -> bool:
     score = sum(1 for k in keywords if k in txt)
     return score >= 2
 
-def build_card_interval_map(pdf_bytes):
+def build_card_interval_map(pdf_bytes, aircraft_family=None):
     card_map = {}
 
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
@@ -456,7 +466,7 @@ def build_card_interval_map(pdf_bytes):
             if not is_task_card_like_page(txt):
                 continue
 
-            intervals = extract_intervals_from_page(text)
+            intervals = extract_intervals_from_page(text, aircraft_family)
             if not intervals:
                 continue
 
@@ -492,6 +502,15 @@ def format_interval_summary(intervals):
         parts.append(part)
 
     return " | ".join(parts)
+
+def get_interval_rule_text(aircraft_family):
+    family = (aircraft_family or "").upper().strip()
+
+    if family == "B737MAX":
+        return "Interval limitleri (B737MAX): FH ≥ 1600 | FC ≥ 150 | DY ≥ 120 | YR eşik dışı | MO -> YR dönüşür ama MAX için eşik dışı"
+    elif family == "B737NG":
+        return "Interval limitleri (B737NG): FH ≥ 15000 | FC ≥ 4500 | YR ≥ 3 | MO -> YR (12 MO = 1 YR)"
+    return "Interval limitleri: Uçak tipi tanınamadı, varsayılan olarak NG kuralları uygulanır."
 
 # -----------------------------
 # Engineering mapping
@@ -624,8 +643,10 @@ if st.button("Excel Oluştur"):
             else:
                 st.warning(msg)
 
+            st.info(get_interval_rule_text(family))
+
             aircraft, package_name, tasks = extract_summary_tasks(pdf_bytes)
-            card_interval_map = build_card_interval_map(pdf_bytes)
+            card_interval_map = build_card_interval_map(pdf_bytes, family)
 
             interval_found_count = 0
             interval_exceed_count = 0
