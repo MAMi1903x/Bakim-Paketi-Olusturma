@@ -23,8 +23,6 @@ if use_engineering:
         type=["xlsx"]
     )
 
-show_debug = st.checkbox("Debug bilgilerini göster", value=True)
-
 # -----------------------------
 # Session state
 # -----------------------------
@@ -68,13 +66,6 @@ def yn_from_any(val) -> str:
     return "Y" if s in ("Y", "YES", "TRUE", "1", "T") else "N"
 
 def parse_mh_and_skill(value):
-    """
-    Est. MH örnekleri:
-      - 03:00/B1 -> ("3","B1")
-      - 00:45/B1 -> ("0","B1")  (sonra 0->1)
-      - 3/B1     -> ("3","B1")
-      - 03:00    -> ("3","")
-    """
     if value is None:
         return "", ""
     v = str(value).strip()
@@ -114,10 +105,6 @@ def normalize_text_for_search(text: str) -> str:
     return txt.strip()
 
 def extract_card_no(text: str) -> str:
-    """
-    Önce 4 segmentli kartı ara: 27-225-01-01
-    Bulamazsa 3 segmentli ara: 27-225-01
-    """
     if not text:
         return ""
 
@@ -214,10 +201,6 @@ def table_looks_like_summary(header_row) -> bool:
     return has_desc and has_mh and has_ref
 
 def extract_summary_tasks(pdf_bytes: bytes):
-    """
-    Summary tablosundan task çıkarır.
-    Kart numarası description yerine tüm satır text'inden çekilir.
-    """
     full_text = ""
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         for p in pdf.pages:
@@ -303,6 +286,13 @@ def extract_summary_tasks(pdf_bytes: bytes):
 # -----------------------------
 # Interval parsing
 # -----------------------------
+STOP_WORDS = {
+    "ZONE", "ACCESS", "TASK", "WORK AREA", "SKILL", "APPLICABILITY",
+    "REFERENCES", "NOTE", "MAN-HOURS", "MH EST", "DESCRIPTION",
+    "METHOD", "END OF TASK", "CARD NUMBER", "BOEING CARD NO",
+    "PLANNING INFORMATION", "A. EFFECTIVITY"
+}
+
 def interval_exceeds(interval_type, value):
     t = str(interval_type).upper().strip()
     try:
@@ -324,17 +314,12 @@ def convert_mo_to_yr(mo_value):
     except Exception:
         return None
 
-def extract_section_intervals(section_text, source_name):
-    """
-    FH / FC / YR / MO yakalar.
-    MO bulunduğunda YR'a çevrilmiş olarak kaydeder.
-    """
+def extract_intervals_from_chunk(chunk_text, source_name):
     results = []
-    if not section_text:
+    if not chunk_text:
         return results
 
-    found = re.findall(r"(\d+(?:\.\d+)?)\s*(FH|FC|YR|MO)\b", section_text, re.IGNORECASE)
-
+    found = re.findall(r"(\d+(?:\.\d+)?)\s*(FH|FC|YR|MO)\b", chunk_text, re.IGNORECASE)
     for value, typ in found:
         try:
             v = float(value)
@@ -342,12 +327,10 @@ def extract_section_intervals(section_text, source_name):
             continue
 
         t = typ.upper()
-
         if t == "MO":
             yr_val = convert_mo_to_yr(v)
             if yr_val is None:
                 continue
-
             results.append({
                 "type": "YR",
                 "value": yr_val,
@@ -365,7 +348,6 @@ def extract_section_intervals(section_text, source_name):
                 "raw_value": v,
                 "exceed": interval_exceeds(t, v)
             })
-
     return results
 
 def deduplicate_intervals(intervals):
@@ -386,29 +368,57 @@ def deduplicate_intervals(intervals):
 
     return unique
 
+def collect_labeled_section(lines, label):
+    """
+    THRESHOLD / REPEAT satırını bulur, sonraki birkaç satırı da toplar.
+    Böylece 1250 FC ve 8 MO gibi alt satırlara kaçan değerler yakalanır.
+    """
+    chunks = []
+    n = len(lines)
+
+    for i, line in enumerate(lines):
+        up = normalize_text_for_search(line)
+
+        if label not in up:
+            continue
+
+        buf = [up]
+
+        # Aynı satırdan sonra gelen satırlar da section içine alınır
+        for j in range(i + 1, min(i + 8, n)):
+            nxt = normalize_text_for_search(lines[j])
+            if not nxt:
+                continue
+
+            if j != i + 1 and any(sw in nxt for sw in STOP_WORDS):
+                break
+
+            buf.append(nxt)
+
+        chunks.append(" ".join(buf))
+
+    return chunks
+
 def extract_intervals_from_page(page_text):
-    txt = normalize_text_for_search(page_text)
     intervals = []
+    if not page_text:
+        return intervals
 
-    # THRESHOLD bölümü
-    m_threshold = re.search(
-        r"THRESHOLD(.*?)(REPEAT|ZONE|ACCESS|TASK|WORK AREA|SKILL|APPLICABILITY|REFERENCES|NOTE|MAN-HOURS|MH EST|DESCRIPTION|METHOD)",
-        txt
-    )
-    if m_threshold:
-        intervals.extend(extract_section_intervals(m_threshold.group(1), "THRESHOLD"))
+    lines = str(page_text).splitlines()
 
-    # REPEAT bölümü
-    m_repeat = re.search(
-        r"REPEAT(.*?)(ZONE|ACCESS|TASK|WORK AREA|SKILL|APPLICABILITY|REFERENCES|NOTE|MAN-HOURS|MH EST|END OF TASK|DESCRIPTION|METHOD)",
-        txt
-    )
-    if m_repeat:
-        intervals.extend(extract_section_intervals(m_repeat.group(1), "REPEAT"))
+    threshold_chunks = collect_labeled_section(lines, "THRESHOLD")
+    repeat_chunks = collect_labeled_section(lines, "REPEAT")
 
-    # Eğer hiç interval bulunmazsa tüm sayfada fallback ara
+    for chunk in threshold_chunks:
+        intervals.extend(extract_intervals_from_chunk(chunk, "THRESHOLD"))
+
+    for chunk in repeat_chunks:
+        intervals.extend(extract_intervals_from_chunk(chunk, "REPEAT"))
+
+    # Eğer labeled section'dan bir şey çıkmadıysa fallback
     if not intervals:
-        intervals.extend(extract_section_intervals(txt, "PAGE_FALLBACK"))
+        txt = normalize_text_for_search(page_text)
+        intervals.extend(extract_intervals_from_chunk(txt, "PAGE_FALLBACK"))
 
     return deduplicate_intervals(intervals)
 
@@ -426,12 +436,7 @@ def is_task_card_like_page(page_text: str) -> bool:
     return score >= 2
 
 def build_card_interval_map(pdf_bytes):
-    """
-    PDF'in tüm sayfalarını tarar.
-    Task-card benzeri sayfalarda kart numarası ve interval bilgilerini toplar.
-    """
     card_map = {}
-    debug_rows = []
 
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         for page_no, page in enumerate(pdf.pages, start=1):
@@ -451,7 +456,7 @@ def build_card_interval_map(pdf_bytes):
             if not is_task_card_like_page(txt):
                 continue
 
-            intervals = extract_intervals_from_page(txt)
+            intervals = extract_intervals_from_page(text)
             if not intervals:
                 continue
 
@@ -461,20 +466,10 @@ def build_card_interval_map(pdf_bytes):
                     card_map[card_no] = []
                 card_map[card_no].extend(intervals)
 
-            debug_rows.append({
-                "Page": page_no,
-                "Cards": ", ".join(unique_cards),
-                "Intervals Found": " | ".join(
-                    f'{x["source"]}:{format_num(x["raw_value"])}{x["raw_type"]}'
-                    + (f'=>{format_num(x["value"])}{x["type"]}' if x["raw_type"] == "MO" else "")
-                    for x in intervals
-                )
-            })
-
     for card_no in list(card_map.keys()):
         card_map[card_no] = deduplicate_intervals(card_map[card_no])
 
-    return card_map, debug_rows
+    return card_map
 
 def format_interval_summary(intervals):
     if not intervals:
@@ -630,8 +625,7 @@ if st.button("Excel Oluştur"):
                 st.warning(msg)
 
             aircraft, package_name, tasks = extract_summary_tasks(pdf_bytes)
-
-            card_interval_map, interval_debug_rows = build_card_interval_map(pdf_bytes)
+            card_interval_map = build_card_interval_map(pdf_bytes)
 
             interval_found_count = 0
             interval_exceed_count = 0
@@ -658,11 +652,9 @@ if st.button("Excel Oluştur"):
             if use_engineering and map_file is not None:
                 mapping, kompleks_any = load_engineering_mapping(map_file)
 
-                matched = 0
                 for t in tasks:
                     k = clean_text_key(t["match_key"])
                     if k in mapping:
-                        matched += 1
                         t["rII"] = mapping[k]["cmt"]
                         t["critical_task"] = mapping[k]["imt"]
                         t["cdccl"] = mapping[k]["cdccl"]
@@ -671,7 +663,6 @@ if st.button("Excel Oluştur"):
                         t["critical_task"] = "N"
                         t["cdccl"] = "N"
 
-                st.info(f"Eşleştirme: {matched} eşleşti | {len(tasks) - matched} eşleşmedi")
                 if kompleks_any:
                     st.warning("⚠️ Kompleks iş var (KOMPLEKS=Y/YES bulundu)")
 
@@ -694,16 +685,6 @@ if st.button("Excel Oluştur"):
             if len(tasks) == 0:
                 st.error("Summary tablosundan hiç iş çekilemedi.")
             else:
-                summary_cards_df = pd.DataFrame([{
-                    "Page": t.get("page_no", ""),
-                    "Card No": t.get("card_no", ""),
-                    "Description": t.get("match_key", "")
-                } for t in tasks])
-
-                if show_debug:
-                    st.subheader("Summary'den Çekilen Kartlar")
-                    st.dataframe(summary_cards_df, use_container_width=True)
-
                 interval_rows = []
                 for t in tasks:
                     if t.get("card_no"):
@@ -723,20 +704,6 @@ if st.button("Excel Oluştur"):
                     if not exceed_df.empty:
                         st.subheader("Limit Aşan Kartlar")
                         st.dataframe(exceed_df, use_container_width=True)
-
-                if show_debug and interval_debug_rows:
-                    st.subheader("Task Card Sayfalarında Yakalanan Interval'ler")
-                    st.dataframe(pd.DataFrame(interval_debug_rows), use_container_width=True)
-
-                if show_debug and card_interval_map:
-                    map_rows = []
-                    for card_no, intervals in card_interval_map.items():
-                        map_rows.append({
-                            "Card No": card_no,
-                            "Intervals": format_interval_summary(intervals)
-                        })
-                    st.subheader("Card Interval Map")
-                    st.dataframe(pd.DataFrame(map_rows), use_container_width=True)
 
                 filled_xlsx = fill_template_excel(
                     template_bytes=template_bytes,
