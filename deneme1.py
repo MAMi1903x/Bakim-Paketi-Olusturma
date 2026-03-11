@@ -310,6 +310,8 @@ def interval_exceeds(interval_type, value, aircraft_family=None):
             return v > 150
         elif t == "DY":
             return v > 120
+        elif t == "MO":
+            return v > 4
         return False
 
     # Varsayılan / B737NG kuralları
@@ -334,6 +336,8 @@ def extract_intervals_from_chunk(chunk_text, source_name, aircraft_family=None):
 
     found = re.findall(r"(\d+(?:\.\d+)?)\s*(FH|FC|YR|MO|DY)\b", chunk_text, re.IGNORECASE)
 
+    family = (aircraft_family or "").upper().strip()
+
     for value, typ in found:
         try:
             v = float(value)
@@ -342,10 +346,12 @@ def extract_intervals_from_chunk(chunk_text, source_name, aircraft_family=None):
 
         t = typ.upper()
 
-        if t == "MO":
+        # NG için MO -> YR dönüşümü
+        if t == "MO" and family != "B737MAX":
             yr_val = convert_mo_to_yr(v)
             if yr_val is None:
                 continue
+
             results.append({
                 "type": "YR",
                 "value": yr_val,
@@ -354,6 +360,7 @@ def extract_intervals_from_chunk(chunk_text, source_name, aircraft_family=None):
                 "raw_value": v,
                 "exceed": interval_exceeds("YR", yr_val, aircraft_family)
             })
+
         else:
             results.append({
                 "type": t,
@@ -507,7 +514,7 @@ def get_interval_rule_text(aircraft_family):
     family = (aircraft_family or "").upper().strip()
 
     if family == "B737MAX":
-        return "Interval limitleri (B737MAX): FH ≥ 1600 | FC ≥ 150 | DY ≥ 120 | YR eşik dışı | MO -> YR dönüşür ama MAX için eşik dışı"
+        return "Interval limitleri (B737MAX): FH > 1600 | FC > 150 | DY > 120 | MO > 4 | YR eşik dışı"
     elif family == "B737NG":
         return "Interval limitleri (B737NG): FH ≥ 15000 | FC ≥ 4500 | YR ≥ 3 | MO -> YR (12 MO = 1 YR)"
     return "Interval limitleri: Uçak tipi tanınamadı, varsayılan olarak NG kuralları uygulanır."
@@ -772,4 +779,5 @@ if st.session_state["filled_xlsx"] is not None:
             mime="text/plain",
             key=f"dl_txt_persist_{v}",
         )
+
 
