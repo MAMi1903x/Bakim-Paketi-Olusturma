@@ -656,7 +656,10 @@ if st.button("Excel Oluştur"):
                 intervals = card_interval_map.get(card_no, []) if card_no else []
 
                 t["intervals"] = intervals
-                t["interval_exceed"] = "Y" if any(x.get("exceed") for x in intervals) else "N"
+                if intervals:
+                    t["interval_exceed"] = "Y" if all(x.get("exceed") for x in intervals) else "N"
+                else:
+                    t["interval_exceed"] = "N"
                 t["interval_summary"] = format_interval_summary(intervals)
 
                 if intervals:
@@ -769,3 +772,4 @@ if st.session_state["filled_xlsx"] is not None:
             mime="text/plain",
             key=f"dl_txt_persist_{v}",
         )
+
