@@ -38,6 +38,19 @@ if "dl_v" not in st.session_state:
 # -----------------------------
 # Helpers
 # -----------------------------
+def has_eod_max_engine_run_card(tasks, target_card="EOD-B737-73-0003") -> bool:
+    target = str(target_card).strip().upper()
+    for t in tasks:
+        text_to_check = " ".join([
+            str(t.get("match_key", "")),
+            str(t.get("description", "")),
+            str(t.get("row_text", "")),
+            str(t.get("card_no", "")),
+        ]).upper()
+
+        if target in text_to_check:
+            return True
+    return False
 def get_location_from_package(package_name: str) -> str:
     package_name = (package_name or "").strip().upper()
     return package_name[-3:] if len(package_name) >= 3 else ""
@@ -675,11 +688,10 @@ if st.button("Excel Oluştur"):
                     interval_exceed_count += 1
 
             location = get_location_from_package(package_name)
-            target = "38-070-00-01"
-            has_target = any((t.get("match_key", "") or "")[:12].upper() == target for t in tasks)
-            if location == "AYT" and has_target:
-                st.warning("‼️WATER DISINFECTION KARTI TOOL SORUNU VAR | 38-070-00-01 SEBEBİYLE‼️")
-
+            # MAX + ADB + EOD-B737-73-0003 uyarısı
+            has_max_eod_card = has_eod_max_engine_run_card(tasks, "EOD-B737-73-0003")
+            if family == "B737MAX" and location == "ADB" and has_max_eod_card:
+                st.warning("‼️İzmirde MAX motor çalıştırma yetkili personel yoktu, teyit lazım.‼️")
             if use_engineering and map_file is not None:
                 mapping, kompleks_any = load_engineering_mapping(map_file)
 
@@ -779,5 +791,6 @@ if st.session_state["filled_xlsx"] is not None:
             mime="text/plain",
             key=f"dl_txt_persist_{v}",
         )
+
 
 
