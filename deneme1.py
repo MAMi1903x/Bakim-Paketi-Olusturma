@@ -691,7 +691,7 @@ if st.button("Excel Oluştur"):
             # MAX + ADB + EOD-B737-73-0003 uyarısı
             has_max_eod_card = has_eod_max_engine_run_card(tasks, "EOD-B737-73-0003")
             if family == "B737MAX" and location == "ADB" and has_max_eod_card:
-                st.warning("‼️İzmirde MAX motor çalıştırma yetkili personel yoktu, teyit lazım.‼️")
+                st.warning("EOD-B737-73-0003|‼️İzmirde MAX motor çalıştırma yetkili personel yoktu, teyit lazım.‼️")
             if use_engineering and map_file is not None:
                 mapping, kompleks_any = load_engineering_mapping(map_file)
 
@@ -791,6 +791,7 @@ if st.session_state["filled_xlsx"] is not None:
             mime="text/plain",
             key=f"dl_txt_persist_{v}",
         )
+
 
 
 
