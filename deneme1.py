@@ -50,7 +50,7 @@ def mpd_cmr_interval(tasks, target_card="52-360-00-01") -> bool:
 
         if target in text_to_check:
             return True
-    return Fals
+    return False
 def has_eod_max_engine_run_card(tasks, target_card="EOD-B737-73-0003") -> bool:
     target = str(target_card).strip().upper()
     for t in tasks:
