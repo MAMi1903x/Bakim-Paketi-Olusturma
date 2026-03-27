@@ -51,6 +51,58 @@ def mpd_cmr_interval(tasks, target_card="52-360-00-01") -> bool:
         if target in text_to_check:
             return True
     return False
+def NDT_control(tasks, target_card="EOD-B737-53-0010") -> bool:
+    target = str(target_card).strip().upper()
+    for t in tasks:
+        text_to_check = " ".join([
+            str(t.get("match_key", "")),
+            str(t.get("description", "")),
+            str(t.get("row_text", "")),
+            str(t.get("card_no", "")),
+        ]).upper()
+
+        if target in text_to_check:
+            return True
+    return False
+def access_issue(tasks, target_card="EOD-B737-51-0010") -> bool:
+    target = str(target_card).strip().upper()
+    for t in tasks:
+        text_to_check = " ".join([
+            str(t.get("match_key", "")),
+            str(t.get("description", "")),
+            str(t.get("row_text", "")),
+            str(t.get("card_no", "")),
+        ]).upper()
+
+        if target in text_to_check:
+            return True
+    return False
+def access_issue2(tasks, target_card="55-826-01-01") -> bool:
+    target = str(target_card).strip().upper()
+    for t in tasks:
+        text_to_check = " ".join([
+            str(t.get("match_key", "")),
+            str(t.get("description", "")),
+            str(t.get("row_text", "")),
+            str(t.get("card_no", "")),
+        ]).upper()
+
+        if target in text_to_check:
+            return True
+    return False
+def access_issue3(tasks, target_card="55-840-02-01") -> bool:
+    target = str(target_card).strip().upper()
+    for t in tasks:
+        text_to_check = " ".join([
+            str(t.get("match_key", "")),
+            str(t.get("description", "")),
+            str(t.get("row_text", "")),
+            str(t.get("card_no", "")),
+        ]).upper()
+
+        if target in text_to_check:
+            return True
+    return False
 def has_eod_max_engine_run_card(tasks, target_card="EOD-B737-73-0003") -> bool:
     target = str(target_card).strip().upper()
     for t in tasks:
@@ -702,8 +754,20 @@ if st.button("Excel Oluştur"):
 
             location = get_location_from_package(package_name)
             mpd_cmr_interval = mpd_cmr_interval(tasks, "52-360-00-01")
+            NDT_control=NDT_control(tasks, "EOD-B737-53-0010")
+            access_issue=access_issue(tasks, "EOD-B737-51-0010")
+            access_issue2=access_issue2(tasks, "55-826-01-01")
+            access_issue3=access_issue3(tasks, "55-840-02-01")
             if mpd_cmr_interval:
                 st.warning("52-360-00-01|‼️Kartın İntervali limit dışı fakat Special notunda limit içi olabilir. Kontrol edilmeli.‼️")
+            if NDT_control:
+                st.warning("EOD-B737-53-0010|‼️NDT Kontrolü olması sebebiyle Furkan Erence Cancel talebi yapmıştı.  kontrol lütfen.‼️")
+            if access_issue:
+                st.warning("EOD-B737-51-0010|‼️Detaylı gövde erişimi sorunu sebebiyle Furkan Erence Cancel talebi yapmıştı. kontrol lütfen.‼️")
+            if access_issue2:
+                st.warning("55-826-01-01|‼️Bölge erişimi sorunu sebebiyle Furkan Erence Cancel talebi yapmıştı. kontrol lütfen.‼️")
+             if access_issue3:
+                st.warning("55-840-02-01|‼️Bölge erişimi sorunu sebebiyle Furkan Erence Cancel talebi yapmıştı. kontrol lütfen.‼️")
             # MAX + ADB + EOD-B737-73-0003 uyarısı
             has_max_eod_card = has_eod_max_engine_run_card(tasks, "EOD-B737-73-0003")
             if family == "B737MAX" and location == "ADB" and has_max_eod_card:
