@@ -766,7 +766,7 @@ if st.button("Excel Oluştur"):
                 st.warning("EOD-B737-51-0010|‼️Detaylı gövde erişimi sorunu sebebiyle Furkan Erence Cancel talebi yapmıştı. kontrol lütfen.‼️")
             if access_issue2:
                 st.warning("55-826-01-01|‼️Bölge erişimi sorunu sebebiyle Furkan Erence Cancel talebi yapmıştı. kontrol lütfen.‼️")
-             if access_issue3:
+            if access_issue3:
                 st.warning("55-840-02-01|‼️Bölge erişimi sorunu sebebiyle Furkan Erence Cancel talebi yapmıştı. kontrol lütfen.‼️")
             # MAX + ADB + EOD-B737-73-0003 uyarısı
             has_max_eod_card = has_eod_max_engine_run_card(tasks, "EOD-B737-73-0003")
