@@ -767,7 +767,7 @@ if st.button("Excel Oluştur"):
                     interval_exceed_count += 1
 
             location = get_location_from_package(package_name)
-            mpd_cmr_interval2 = mpd_cmr_interval(tasks, "28-115-00-01")
+            mpd_cmr_interval2 = mpd_cmr_interval2(tasks, "28-115-00-01")
             mpd_cmr_interval = mpd_cmr_interval(tasks, "52-360-00-01")
             NDT_control=NDT_control(tasks, "EOD-B737-53-0010")
             access_issue=access_issue(tasks, "EOD-B737-51-0010")
