@@ -773,7 +773,7 @@ if st.button("Excel Oluştur"):
             access_issue=access_issue(tasks, "EOD-B737-51-0010")
             access_issue2=access_issue2(tasks, "55-826-01-01")
             access_issue3=access_issue3(tasks, "55-840-02-01")
-            if mpd_cmr_interval:
+            if mpd_cmr_interval2:
                 st.warning("28-115-00-01|‼️Kartın İntervali limit dışı fakat Special notunda limit içi olabilir. Kontrol edilmeli.‼️")
             if mpd_cmr_interval:
                 st.warning("52-360-00-01|‼️Kartın İntervali limit dışı fakat Special notunda limit içi olabilir. Kontrol edilmeli.‼️")
