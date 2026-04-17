@@ -384,8 +384,6 @@ def interval_exceeds(interval_type, value, aircraft_family=None):
     if family == "B737MAX":
         if t == "FH":
             return v > 1600
-        elif t == "FC":
-            return v > 150
         elif t == "DY":
             return v > 120
         elif t == "MO":
@@ -592,7 +590,7 @@ def get_interval_rule_text(aircraft_family):
     family = (aircraft_family or "").upper().strip()
 
     if family == "B737MAX":
-        return "Interval limitleri (B737MAX): FH > 1600 | FC > 150 | DY > 120 | MO > 4 | YR eşik dışı"
+        return "Interval limitleri (B737MAX): FH > 1600 | DY > 120 | MO > 4 | YR eşik dışı"
     elif family == "B737NG":
         return "Interval limitleri (B737NG): FH ≥ 15000 | FC ≥ 4500 | YR ≥ 3 | MO -> YR (12 MO = 1 YR)"
     return "Interval limitleri: Uçak tipi tanınamadı, varsayılan olarak NG kuralları uygulanır."
