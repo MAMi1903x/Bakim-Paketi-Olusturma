@@ -38,6 +38,20 @@ if "dl_v" not in st.session_state:
 # -----------------------------
 # Helpers
 # -----------------------------
+
+def mpd_cmr_interval2(tasks, target_card="28-115-00-01") -> bool:
+    target = str(target_card).strip().upper()
+    for t in tasks:
+        text_to_check = " ".join([
+            str(t.get("match_key", "")),
+            str(t.get("description", "")),
+            str(t.get("row_text", "")),
+            str(t.get("card_no", "")),
+        ]).upper()
+
+        if target in text_to_check:
+            return True
+    return False
 def mpd_cmr_interval(tasks, target_card="52-360-00-01") -> bool:
     target = str(target_card).strip().upper()
     for t in tasks:
@@ -753,11 +767,14 @@ if st.button("Excel Oluştur"):
                     interval_exceed_count += 1
 
             location = get_location_from_package(package_name)
+            mpd_cmr_interval2 = mpd_cmr_interval(tasks, "28-115-00-01")
             mpd_cmr_interval = mpd_cmr_interval(tasks, "52-360-00-01")
             NDT_control=NDT_control(tasks, "EOD-B737-53-0010")
             access_issue=access_issue(tasks, "EOD-B737-51-0010")
             access_issue2=access_issue2(tasks, "55-826-01-01")
             access_issue3=access_issue3(tasks, "55-840-02-01")
+            if mpd_cmr_interval:
+                st.warning("28-115-00-01|‼️Kartın İntervali limit dışı fakat Special notunda limit içi olabilir. Kontrol edilmeli.‼️")
             if mpd_cmr_interval:
                 st.warning("52-360-00-01|‼️Kartın İntervali limit dışı fakat Special notunda limit içi olabilir. Kontrol edilmeli.‼️")
             if NDT_control:
